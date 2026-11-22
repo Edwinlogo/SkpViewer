@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="96" y1="96" x2="416" y2="416" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="topFace" x1="120" y1="110" x2="392" y2="230" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="leftFace" x1="120" y1="190" x2="256" y2="404" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <linearGradient id="rightFace" x1="256" y1="190" x2="392" y2="404" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4338ca"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect x="24" y="24" width="464" height="464" rx="92" stroke="url(#accent)" stroke-opacity="0.35" stroke-width="6"/>
+  <!-- Isometric architectural cube -->
+  <polygon points="256,104 392,176 256,248 120,176" fill="url(#topFace)"/>
+  <polygon points="120,176 256,248 256,396 120,324" fill="url(#leftFace)"/>
+  <polygon points="392,176 256,248 256,396 392,324" fill="url(#rightFace)"/>
+  <!-- Cutout step inspired by SketchUp -->
+  <polygon points="256,154 334,195 256,236 178,195" fill="#0f172a" fill-opacity="0.4"/>
+  <!-- XR Passthrough visor curve -->
+  <path d="M108 378 C156 426, 356 426, 404 378" stroke="#38bdf8" stroke-width="14" stroke-linecap="round" opacity="0.9"/>
+  <circle cx="256" cy="104" r="10" fill="#e0f2fe"/>
+</svg>
