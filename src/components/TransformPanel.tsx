@@ -143,10 +143,10 @@ export function TransformPanel({
         </div>
       </div>
 
-      {/* Rotation */}
+      {/* Rotation (Horizontal Yaw locked) */}
       <div className="control-block">
         <div className="control-label-row">
-          <span className="control-label">Rotación (°)</span>
+          <span className="control-label">Rotación Horizontal (°)</span>
           <div className="mini-actions">
             <button
               type="button"
@@ -164,26 +164,27 @@ export function TransformPanel({
             </button>
           </div>
         </div>
-        {(['X', 'Y', 'Z'] as const).map((axisName, idx) => (
-          <div key={axisName} className="axis-row">
-            <span className={`axis-tag axis-${axisName.toLowerCase()}`}>{axisName}</span>
-            <input
-              type="range"
-              min={-180}
-              max={180}
-              step={1}
-              value={transform.rotationDeg[idx]}
-              onChange={(e) => updateRotAxis(idx as 0 | 1 | 2, Number(e.target.value))}
-              className="range-slider"
-            />
-            <input
-              type="number"
-              className="num-input"
-              value={transform.rotationDeg[idx]}
-              onChange={(e) => updateRotAxis(idx as 0 | 1 | 2, Number(e.target.value))}
-            />
-          </div>
-        ))}
+        <div className="axis-row">
+          <span className="axis-tag axis-y">Y</span>
+          <input
+            type="range"
+            min={-180}
+            max={180}
+            step={1}
+            value={transform.rotationDeg[1]}
+            onChange={(e) => updateRotAxis(1, Number(e.target.value))}
+            className="range-slider"
+          />
+          <input
+            type="number"
+            className="num-input"
+            value={transform.rotationDeg[1]}
+            onChange={(e) => updateRotAxis(1, Number(e.target.value))}
+          />
+        </div>
+        <div className="control-subnote">
+          Nivelado horizontal bloqueado: el modelo conserva siempre su orientación horizontal al moverlo.
+        </div>
       </div>
 
       {/* Position */}

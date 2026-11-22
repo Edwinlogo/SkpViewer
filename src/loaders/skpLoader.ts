@@ -15,6 +15,7 @@ import type {
   SceneNodeInfo,
   ViewerScene,
 } from '../types/viewer';
+import { extractSkpSceneHiddenEntities } from './skpSceneEntities';
 
 const INCH_TO_METER = 0.0254;
 
@@ -322,6 +323,8 @@ export async function loadSkpFromBuffer(
   contentRoot.name = fileName;
 
   const nodeMap = new Map<string, THREE.Object3D>();
+  const guidToNodeIds = new Map<string, string[]>();
+  const nameToNodeIds = new Map<string, string[]>();
   let nodeCounter = 0;
   let totalMeshes = 0;
   let totalTriangles = 0;
@@ -407,10 +410,26 @@ export async function loadSkpFromBuffer(
       nodeId,
       layerId: layerInfo.id,
       ownVisible,
+      guid: src.guid || '',
       definitionName: src.definitionName,
       properties: mergedProps,
     };
     nodeMap.set(nodeId, group);
+
+    if (!isRoot) {
+      if (src.guid) {
+        const gKey = src.guid.toUpperCase();
+        const arr = guidToNodeIds.get(gKey) ?? [];
+        arr.push(nodeId);
+        guidToNodeIds.set(gKey, arr);
+      }
+      const nKey = displayName.trim().toLowerCase();
+      if (nKey) {
+        const arr = nameToNodeIds.get(nKey) ?? [];
+        arr.push(nodeId);
+        nameToNodeIds.set(nKey, arr);
+      }
+    }
 
     const nodeType: SceneNodeInfo['type'] = isRoot
       ? 'root'
@@ -457,11 +476,23 @@ export async function loadSkpFromBuffer(
     contentRoot.updateMatrixWorld(true);
   }
 
+  // Extract per-scene hidden elements (groups/components hidden directly in SketchUp Scenes)
+  const sceneHiddenEntities = extractSkpSceneHiddenEntities(buffer, {
+    guidToNodeIds,
+    nameToNodeIds,
+  });
+
   // Convert SketchUp Pages (Scenes) into ViewerScenes!
   const scenes: ViewerScene[] = parsed.pages.map((page: Page, idx: number) => {
     const hiddenLayerIds = (page.hiddenLayers ?? [])
       .map((name) => normalizeLayerKey(name))
       .filter((id) => layerMap.has(id));
+
+    const hiddenNodeIds = sceneHiddenEntities.detected
+      ? (sceneHiddenEntities.byPageIndex.get(idx) ??
+          (page.name ? sceneHiddenEntities.byPageName.get(page.name) : undefined) ??
+          [])
+      : undefined;
 
     const hasCamera = Boolean(page.eye && page.target);
     return {
@@ -480,6 +511,7 @@ export async function loadSkpFromBuffer(
           }
         : undefined,
       hiddenLayerIds,
+      hiddenNodeIds,
       transitionSec: 2.0,
       delaySec: 1.5,
       includeInAnimation: true,

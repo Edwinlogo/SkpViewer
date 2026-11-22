@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { create } from 'openskp';
+import { zipSync } from 'fflate';
 import { loadSkpFromBuffer } from './skpLoader';
+import { extractSkpSceneHiddenEntities } from './skpSceneEntities';
 import { detectModelFormat, loadModelFromBuffer } from './universalLoader';
 
 describe('SketchUp (.skp) & Universal Loader', () => {
@@ -47,9 +49,12 @@ describe('SketchUp (.skp) & Universal Loader', () => {
     expect(model.rawSize[1]).toBeGreaterThan(3.5);
     expect(model.rawSize[2]).toBeGreaterThan(9);
 
-    // Demo scenes with layer visibility overrides
+    // Demo scenes with both layer visibility overrides and per-element hidden overrides
     expect(model.scenes.length).toBe(5);
     expect(model.scenes.some((s) => (s.hiddenLayerIds?.length ?? 0) > 0)).toBe(true);
+    const scene5 = model.scenes[4];
+    expect(scene5.hiddenLayerIds).toEqual([]);
+    expect((scene5.hiddenNodeIds?.length ?? 0)).toBeGreaterThanOrEqual(4);
     expect(model.nodeMap.size).toBeGreaterThan(10);
   });
 
@@ -95,5 +100,62 @@ describe('SketchUp (.skp) & Universal Loader', () => {
     const hiddenNode = model.tree.children.find((c) => c.name === 'HiddenInst');
     expect(hiddenNode).toBeDefined();
     expect(hiddenNode?.visible).toBe(false);
+  });
+
+  it('extracts per-scene hidden elements (tag 29007) from VFF .skp files', () => {
+    const tlv = (tag: number, payload: Uint8Array): Uint8Array => {
+      const out = new Uint8Array(6 + payload.length);
+      out[0] = tag & 0xff;
+      out[1] = (tag >> 8) & 0xff;
+      const dv = new DataView(out.buffer);
+      dv.setUint32(2, payload.length, true);
+      out.set(payload, 6);
+      return out;
+    };
+    const concat = (...parts: Uint8Array[]): Uint8Array => {
+      const total = parts.reduce((acc, p) => acc + p.length, 0);
+      const out = new Uint8Array(total);
+      let off = 0;
+      for (const p of parts) {
+        out.set(p, off);
+        off += p.length;
+      }
+      return out;
+    };
+
+    // Instance (6419) with entityId = 42 and 16-byte GUID 0102...10
+    const guidBytes = new Uint8Array(16);
+    for (let i = 0; i < 16; i++) guidBytes[i] = i + 1;
+    const guidHex = Array.from(guidBytes)
+      .map((b) => b.toString(16).toUpperCase().padStart(2, '0'))
+      .join('');
+
+    const de05 = tlv(0x05de, new Uint8Array([42]));
+    const dc05 = tlv(0x05dc, de05);
+    const d007 = tlv(0x07d0, dc05);
+    const guidNode = tlv(0x1968, guidBytes);
+    const instNode = tlv(0x1964, concat(d007, guidNode));
+
+    // Page (29000) with name "EscenaSinElemento" and tag 29007 hiding entityId 42
+    const pageName = tlv(28501, new TextEncoder().encode('EscenaSinElemento'));
+    const pageHead = tlv(28500, pageName);
+    const hidden29007 = tlv(29007, new Uint8Array([1, 42])); // length=1, val=42
+    const page29000 = tlv(29000, concat(pageHead, hidden29007));
+    const wrap28001 = tlv(28001, page29000);
+    const wrap28000 = tlv(28000, wrap28001);
+    const pagesRoot = tlv(0x0207, wrap28000);
+
+    const modelDat = concat(instNode, pagesRoot);
+    const zipped = zipSync({ 'model.dat': modelDat });
+    const ab = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength) as ArrayBuffer;
+
+    const result = extractSkpSceneHiddenEntities(ab, {
+      guidToNodeIds: new Map([[guidHex, ['node-7']]]),
+      nameToNodeIds: new Map(),
+    });
+
+    expect(result.detected).toBe(true);
+    expect(result.byPageIndex.get(0)).toEqual(['node-7']);
+    expect(result.byPageName.get('EscenaSinElemento')).toEqual(['node-7']);
   });
 });

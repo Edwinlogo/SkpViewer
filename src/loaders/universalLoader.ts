@@ -287,7 +287,16 @@ function finalizeGenericObject(params: {
   };
 }
 
-export function createDemoPavilionScenes(): ViewerScene[] {
+export function createDemoPavilionScenes(nodeMap?: Map<string, THREE.Object3D>): ViewerScene[] {
+  const hiddenChairsAndLoungers: string[] = [];
+  if (nodeMap) {
+    nodeMap.forEach((obj, id) => {
+      if (/^Silla_Comedor_|^Sillon_Terraza_/i.test(obj.name)) {
+        hiddenChairsAndLoungers.push(id);
+      }
+    });
+  }
+
   return [
     {
       id: 'demo-scene-1',
@@ -300,6 +309,7 @@ export function createDemoPavilionScenes(): ViewerScene[] {
         fov: 42,
       },
       hiddenLayerIds: [],
+      hiddenNodeIds: [],
       transitionSec: 2.0,
       delaySec: 2.0,
       includeInAnimation: true,
@@ -315,6 +325,7 @@ export function createDemoPavilionScenes(): ViewerScene[] {
         fov: 45,
       },
       hiddenLayerIds: [],
+      hiddenNodeIds: [],
       transitionSec: 2.2,
       delaySec: 2.0,
       includeInAnimation: true,
@@ -330,6 +341,7 @@ export function createDemoPavilionScenes(): ViewerScene[] {
         fov: 40,
       },
       hiddenLayerIds: ['Cubierta'],
+      hiddenNodeIds: [],
       transitionSec: 2.0,
       delaySec: 2.2,
       includeInAnimation: true,
@@ -345,14 +357,15 @@ export function createDemoPavilionScenes(): ViewerScene[] {
         fov: 42,
       },
       hiddenLayerIds: ['Muros', 'Cubierta', 'Acristalamiento', 'Mobiliario', 'Vegetacion'],
+      hiddenNodeIds: [],
       transitionSec: 2.0,
       delaySec: 2.2,
       includeInAnimation: true,
     },
     {
       id: 'demo-scene-5',
-      name: '5. Comedor Interior',
-      description: 'Vista cálida interior hacia la mesa de cedro y jardín',
+      name: '5. Comedor (Elementos Ocultos)',
+      description: 'Oculta sillas y sillones individuales conservando la capa Mobiliario activa',
       source: 'skp-page',
       camera: {
         position: [-0.4, 2.1, 4.6],
@@ -360,6 +373,7 @@ export function createDemoPavilionScenes(): ViewerScene[] {
         fov: 50,
       },
       hiddenLayerIds: [],
+      hiddenNodeIds: hiddenChairsAndLoungers,
       transitionSec: 2.2,
       delaySec: 2.0,
       includeInAnimation: true,
@@ -387,7 +401,7 @@ export async function loadModelFromBuffer(params: {
     if (isDemo) {
       model.isDemo = true;
       if (model.scenes.length === 0) {
-        model.scenes = createDemoPavilionScenes();
+        model.scenes = createDemoPavilionScenes(model.nodeMap);
         model.stats.scenes = model.scenes.length;
       }
     }

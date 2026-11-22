@@ -189,7 +189,8 @@ export function ScenesPanel({
         ) : (
           scenes.map((sc, idx) => {
             const isActive = playback.activeSceneId === sc.id;
-            const hiddenCount = sc.hiddenLayerIds?.length ?? 0;
+            const hiddenLayerCount = sc.hiddenLayerIds?.length ?? 0;
+            const hiddenNodeCount = sc.hiddenNodeIds?.length ?? 0;
             return (
               <div key={sc.id} className={`scene-card ${isActive ? 'is-active' : ''}`}>
                 <button
@@ -212,7 +213,8 @@ export function ScenesPanel({
                         </span>
                       )}
                       {sc.source === 'custom' && <span>Personalizada</span>}
-                      {hiddenCount > 0 && <span>· {hiddenCount} capas ocultas</span>}
+                      {hiddenLayerCount > 0 && <span>· {hiddenLayerCount} capas ocultas</span>}
+                      {hiddenNodeCount > 0 && <span>· {hiddenNodeCount} elem. ocultos</span>}
                     </div>
                   </div>
                 </button>

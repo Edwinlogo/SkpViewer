@@ -285,6 +285,7 @@ export default function App() {
       onXRStatusChange: (status) => setXRStatus(status),
       onPlaybackChange: (pb) => setPlayback(pb),
       onLayersChanged: (nextLayers) => setLayers(nextLayers),
+      onNodeVisibilityChanged: (visMap) => setNodeVisibility(visMap),
       onBackgroundChange: (mode) => setBackgroundMode(mode),
       onEdgesChange: (vis) => setShowEdges(vis),
       onToast: (msg) => showToast(msg),
@@ -649,15 +650,15 @@ export default function App() {
               onClick={() => void handleEnterXR('immersive-ar')}
               title={
                 xrStatus.arSupported
-                  ? 'Iniciar WebXR AR con Passthrough real'
+                  ? 'Iniciar WebXR con Passthrough real (puedes alternar el fondo dentro del visor)'
                   : 'Activar AR / Cámara Passthrough'
               }
             >
               <Scan size={14} />
-              <span>{xrStatus.activeMode === 'immersive-ar' ? 'Salir AR' : 'WebXR AR'}</span>
+              <span>{xrStatus.activeMode === 'immersive-ar' ? 'Salir XR' : 'XR Passthrough'}</span>
             </button>
 
-            {xrStatus.vrSupported && (
+            {xrStatus.vrSupported && !xrStatus.arSupported && (
               <button
                 type="button"
                 className={`btn btn-sm btn-xr-vr ${xrStatus.activeMode === 'immersive-vr' ? 'is-live' : ''}`}

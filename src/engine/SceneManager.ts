@@ -23,6 +23,7 @@ export interface SceneManagerCallbacks {
   onXRStatusChange: (status: XRStatus) => void;
   onPlaybackChange: (state: AnimationPlaybackState) => void;
   onLayersChanged: (layers: LayerInfo[]) => void;
+  onNodeVisibilityChanged?: (visibility: Record<string, boolean>) => void;
   onBackgroundChange: (mode: BackgroundMode) => void;
   onEdgesChange?: (visible: boolean) => void;
   onToast?: (message: string) => void;
@@ -83,6 +84,7 @@ export class SceneManager {
   // Visibility state (kept orthogonal!)
   private layerVisibility = new Map<string, boolean>();
   private nodeVisibility = new Map<string, boolean>();
+  private defaultNodeVisibility = new Map<string, boolean>();
   private showCadEdges = true;
   private xrayMode = false;
   private savedMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
@@ -136,6 +138,14 @@ export class SceneManager {
   private twoHandPivotStartPos = new THREE.Vector3();
   private twoHandActive = false;
   private spatialPanel: XRSpatialPanel;
+  private spatialPanelPinned = false;
+  private leftWristBadge: THREE.Group;
+  private leftWristBadgeMesh: THREE.Mesh;
+  private leftWristBadgeCanvas: HTMLCanvasElement;
+  private leftWristBadgeTexture: THREE.CanvasTexture;
+  private lastWristPokeMs = 0;
+  private lastOverlayRoot: HTMLElement | null = null;
+  private isSwitchingXRSession = false;
   private buttonLatch = new Map<string, boolean>();
 
   // Pointer picking
@@ -315,6 +325,9 @@ export class SceneManager {
     });
     this.transformControls.addEventListener('objectChange', () => {
       this.enforceUniformScale();
+      // Keep model strictly horizontal (zero pitch/roll)
+      this.modelPivot.rotation.x = 0;
+      this.modelPivot.rotation.z = 0;
       this.emitTransform();
     });
     this.transformHelper = this.transformControls.getHelper();
@@ -339,9 +352,30 @@ export class SceneManager {
     this.reticle.add(innerDot);
     this.scene.add(this.reticle);
 
-    // XR Spatial Panel (3D HUD inside WebXR headsets)
+    // XR Spatial Panel (3D HUD anchored to left hand inside WebXR headsets)
     this.spatialPanel = new XRSpatialPanel((action) => this.handleSpatialPanelAction(action));
     this.scene.add(this.spatialPanel.group);
+
+    // Left-hand Wrist Toggle Badge ("☰ Menú" / "✕ Ocultar")
+    this.leftWristBadge = new THREE.Group();
+    this.leftWristBadge.name = 'XRLeftWristBadge';
+    this.leftWristBadge.visible = false;
+    this.leftWristBadgeCanvas = document.createElement('canvas');
+    this.leftWristBadgeCanvas.width = 256;
+    this.leftWristBadgeCanvas.height = 96;
+    this.leftWristBadgeTexture = new THREE.CanvasTexture(this.leftWristBadgeCanvas);
+    this.leftWristBadgeTexture.colorSpace = THREE.SRGBColorSpace;
+    const badgeMat = new THREE.MeshBasicMaterial({
+      map: this.leftWristBadgeTexture,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthTest: false,
+    });
+    this.leftWristBadgeMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.115, 0.043), badgeMat);
+    this.leftWristBadgeMesh.renderOrder = 20;
+    this.leftWristBadge.add(this.leftWristBadgeMesh);
+    this.scene.add(this.leftWristBadge);
+    this.renderLeftWristBadge();
 
     this.setupXRControllers();
     this.setBackgroundMode('studio');
@@ -452,20 +486,25 @@ export class SceneManager {
     if (!xr) {
       throw new Error('WebXR no está disponible en este navegador.');
     }
+    if (overlayRoot !== undefined) {
+      this.lastOverlayRoot = overlayRoot;
+    }
     if (this.xrSession) {
+      this.isSwitchingXRSession = true;
       await this.xrSession.end();
+      this.isSwitchingXRSession = false;
     }
 
     const optionalFeatures: string[] = ['local-floor', 'bounded-floor', 'hand-tracking'];
     if (mode === 'immersive-ar') {
       optionalFeatures.push('hit-test');
-      if (overlayRoot) optionalFeatures.push('dom-overlay');
+      if (this.lastOverlayRoot) optionalFeatures.push('dom-overlay');
     }
 
     const init: XRSessionInit = { optionalFeatures };
-    if (mode === 'immersive-ar' && overlayRoot) {
+    if (mode === 'immersive-ar' && this.lastOverlayRoot) {
       (init as XRSessionInit & { domOverlay?: { root: HTMLElement } }).domOverlay = {
-        root: overlayRoot,
+        root: this.lastOverlayRoot,
       };
     }
 
@@ -494,35 +533,32 @@ export class SceneManager {
     // Auto-enable transparent Passthrough in AR mode!
     if (mode === 'immersive-ar') {
       this.setBackgroundMode('passthrough');
-      // Place model at comfortable tabletop scale in front of viewer
       this.positionModelForXR(1.25);
     } else {
       this.positionModelForXR(2.2);
     }
 
-    // Show 3D Spatial HUD panel for headsets (when DOM overlay isn't covering the screen)
-    if (!domOverlayActive) {
-      this.spatialPanel.group.visible = true;
-      setTimeout(() => {
-        if (this.xrSession) {
-          this.spatialPanel.placeInFrontOfCamera(this.renderer.xr.getCamera());
-        }
-      }, 250);
-    } else {
-      this.spatialPanel.group.visible = false;
-    }
+    // In headset mode (no DOM overlay), keep the options panel hidden by default
+    // and show the Left-Hand Wrist Menu badge so the user toggles it on their left hand!
+    this.spatialPanelPinned = false;
+    this.spatialPanel.group.visible = false;
+    this.leftWristBadge.visible = !domOverlayActive;
+    this.renderLeftWristBadge();
 
     this.syncSpatialPanel();
     this.callbacks.onXRStatusChange({ ...this.xrStatus });
 
     session.addEventListener('end', () => {
+      if (this.isSwitchingXRSession) return;
       this.xrSession = null;
       this.hitTestSource = null;
       this.hitTestRequested = false;
       this.reticle.visible = false;
       this.spatialPanel.group.visible = false;
+      this.leftWristBadge.visible = false;
       this.twoHandActive = false;
       this.grabbers.forEach((g) => (g.grabbing = false));
+      this.syncDocumentPassthroughClass(false);
       this.xrStatus = {
         ...this.xrStatus,
         activeMode: 'none',
@@ -547,11 +583,114 @@ export class SceneManager {
 
   public toggleSpatialPanel(): void {
     if (!this.xrSession) return;
-    this.spatialPanel.group.visible = !this.spatialPanel.group.visible;
-    if (this.spatialPanel.group.visible) {
-      this.spatialPanel.placeInFrontOfCamera(this.renderer.xr.getCamera());
+    const nextVisible = !this.spatialPanel.group.visible;
+    this.spatialPanel.group.visible = nextVisible;
+    this.renderLeftWristBadge();
+    if (nextVisible) {
+      if (!this.updateLeftHandAnchoredPanel(1)) {
+        this.spatialPanel.placeInFrontOfCamera(this.renderer.xr.getCamera());
+      }
       this.syncSpatialPanel();
     }
+  }
+
+  private renderLeftWristBadge(): void {
+    const ctx = this.leftWristBadgeCanvas.getContext('2d');
+    if (!ctx) return;
+    const w = this.leftWristBadgeCanvas.width;
+    const h = this.leftWristBadgeCanvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const open = this.spatialPanel.group.visible;
+    const r = 28;
+    ctx.beginPath();
+    ctx.moveTo(4 + r, 4);
+    ctx.lineTo(w - 4 - r, 4);
+    ctx.quadraticCurveTo(w - 4, 4, w - 4, 4 + r);
+    ctx.lineTo(w - 4, h - 4 - r);
+    ctx.quadraticCurveTo(w - 4, h - 4, w - 4 - r, h - 4);
+    ctx.lineTo(4 + r, h - 4);
+    ctx.quadraticCurveTo(4, h - 4, 4, h - 4 - r);
+    ctx.lineTo(4, 4 + r);
+    ctx.quadraticCurveTo(4, 4, 4 + r, 4);
+    ctx.closePath();
+
+    ctx.fillStyle = open ? 'rgba(30, 41, 59, 0.94)' : 'rgba(11, 17, 27, 0.92)';
+    ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = open ? 'rgba(248, 113, 113, 0.85)' : 'rgba(56, 189, 248, 0.9)';
+    ctx.stroke();
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '700 34px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(open ? '✕ Ocultar' : '☰ Menú', w / 2, h / 2 + 2);
+    this.leftWristBadgeTexture.needsUpdate = true;
+  }
+
+  private getLeftHandAnchorWorldPos(): THREE.Vector3 | null {
+    // 1. Prefer tracked left XRHand wrist joint if active
+    for (let i = 0; i < this.grabbers.length; i++) {
+      if (this.grabbers[i].inputSource?.handedness !== 'left') continue;
+      const hand = this.xrHands[i];
+      const joints = hand?.joints as Record<string, THREE.Object3D | undefined> | undefined;
+      const wrist = joints?.['wrist'];
+      if (wrist && wrist.visible) {
+        const pos = new THREE.Vector3();
+        wrist.getWorldPosition(pos);
+        if (pos.lengthSq() > 1e-6) return pos;
+      }
+      // 2. Fallback to left XR controller pose
+      const ctrlPos = new THREE.Vector3();
+      this.grabbers[i].controller.getWorldPosition(ctrlPos);
+      if (ctrlPos.lengthSq() > 1e-6) return ctrlPos;
+    }
+    return null;
+  }
+
+  private updateLeftHandAnchoredPanel(lerpAlpha: number): boolean {
+    const leftPos = this.getLeftHandAnchorWorldPos();
+    if (!leftPos) return false;
+
+    const xrCam = this.renderer.xr.getCamera();
+    const camPos = new THREE.Vector3();
+    xrCam.getWorldPosition(camPos);
+
+    const toCam = camPos.clone().sub(leftPos);
+    toCam.y = 0;
+    if (toCam.lengthSq() < 1e-4) toCam.set(0, 0, 1);
+    toCam.normalize();
+    // Vector pointing toward user's right when facing the left hand
+    const userRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), toCam).normalize();
+
+    // Update left-wrist toggle badge right above the left wrist/controller
+    const badgeTarget = leftPos
+      .clone()
+      .add(new THREE.Vector3(0, 0.075, 0))
+      .addScaledVector(toCam, 0.02);
+    if (lerpAlpha >= 0.99) {
+      this.leftWristBadge.position.copy(badgeTarget);
+    } else {
+      this.leftWristBadge.position.lerp(badgeTarget, Math.min(1, lerpAlpha * 1.6));
+    }
+    this.leftWristBadge.lookAt(camPos);
+
+    // If options panel is open and anchored to the left hand, position it cleanly above & beside left hand
+    if (this.spatialPanel.group.visible && !this.spatialPanelPinned) {
+      const panelTarget = leftPos
+        .clone()
+        .add(new THREE.Vector3(0, 0.24, 0))
+        .addScaledVector(userRight, 0.14)
+        .addScaledVector(toCam, -0.04);
+      if (lerpAlpha >= 0.99) {
+        this.spatialPanel.group.position.copy(panelTarget);
+      } else {
+        this.spatialPanel.group.position.lerp(panelTarget, lerpAlpha);
+      }
+      this.spatialPanel.group.lookAt(camPos);
+    }
+    return true;
   }
 
   public setARPlacementMode(active: boolean): void {
@@ -573,6 +712,15 @@ export class SceneManager {
   private onXRSelectStart(index: number): void {
     const grabber = this.grabbers[index];
     if (!grabber) return;
+
+    // 0. Check click on Left-Hand Wrist Menu Badge
+    if (this.leftWristBadge.visible) {
+      const badgeHit = this.raycastFromController(grabber.controller, [this.leftWristBadgeMesh]);
+      if (badgeHit) {
+        this.toggleSpatialPanel();
+        return;
+      }
+    }
 
     // 1. Check click on Spatial 3D Panel first
     if (this.spatialPanel.group.visible) {
@@ -656,8 +804,21 @@ export class SceneManager {
 
   private handleSpatialPanelAction(action: SpatialPanelAction): void {
     switch (action.type) {
-      case 'toggle-passthrough':
-        this.setBackgroundMode(this.backgroundMode === 'passthrough' ? 'studio' : 'passthrough');
+      case 'toggle-passthrough': {
+        const wantPassthrough = this.backgroundMode !== 'passthrough';
+        if (wantPassthrough && this.xrStatus.activeMode === 'immersive-vr' && this.xrStatus.arSupported) {
+          void this.enterXR('immersive-ar', this.lastOverlayRoot);
+          return;
+        }
+        this.setBackgroundMode(wantPassthrough ? 'passthrough' : 'studio');
+        break;
+      }
+      case 'toggle-pin':
+        this.spatialPanelPinned = !this.spatialPanelPinned;
+        break;
+      case 'hide-panel':
+        this.spatialPanel.group.visible = false;
+        this.renderLeftWristBadge();
         break;
       case 'set-scale-preset':
         this.applyScalePreset(action.preset);
@@ -713,6 +874,7 @@ export class SceneManager {
       playback: this.playback,
       scale: this.modelPivot.scale.x,
       showEdges: this.showCadEdges,
+      isPinned: this.spatialPanelPinned,
     });
   }
 
@@ -728,8 +890,10 @@ export class SceneManager {
     }
 
     this.nodeVisibility.clear();
+    this.defaultNodeVisibility.clear();
     const initNodeVis = (node: LoadedModel['tree']) => {
       this.nodeVisibility.set(node.id, node.visible);
+      this.defaultNodeVisibility.set(node.id, node.defaultVisible);
       node.children.forEach(initNodeVis);
     };
     initNodeVis(model.tree);
@@ -846,20 +1010,30 @@ export class SceneManager {
     this.orbitControls.update();
   }
 
+  private syncDocumentPassthroughClass(enabled: boolean): void {
+    const method = enabled ? 'add' : 'remove';
+    document.documentElement.classList[method]('is-xr-passthrough');
+    document.body.classList[method]('is-xr-passthrough');
+    document.getElementById('root')?.classList[method]('is-xr-passthrough');
+  }
+
   public setBackgroundMode(mode: BackgroundMode): void {
     this.backgroundMode = mode;
     const isTransparent = mode === 'passthrough' || mode === 'camera';
 
     this.envGroup.visible = !isTransparent;
     this.shadowCatcherFloor.visible = true;
+    this.syncDocumentPassthroughClass(isTransparent);
 
     if (isTransparent) {
       this.scene.background = null;
       this.renderer.setClearColor(0x000000, 0);
+      this.renderer.setClearAlpha(0);
       (this.shadowCatcherFloor.material as THREE.ShadowMaterial).opacity = 0.28;
     } else if (mode === 'dark') {
       this.scene.background = new THREE.Color('#0b111b');
       this.renderer.setClearColor(0x0b111b, 1);
+      this.renderer.setClearAlpha(1);
       const skyMat = this.skyDome.material as THREE.ShaderMaterial;
       skyMat.uniforms.topColor.value.set('#0b111b');
       skyMat.uniforms.horizonColor.value.set('#162235');
@@ -871,6 +1045,7 @@ export class SceneManager {
       // Studio light architectural environment
       this.scene.background = new THREE.Color('#dbe7f3');
       this.renderer.setClearColor(0xdbe7f3, 1);
+      this.renderer.setClearAlpha(1);
       const skyMat = this.skyDome.material as THREE.ShaderMaterial;
       skyMat.uniforms.topColor.value.set('#bfd9f4');
       skyMat.uniforms.horizonColor.value.set('#eef4fa');
@@ -892,6 +1067,16 @@ export class SceneManager {
       return;
     }
     this.transformControls.setMode(mode);
+    // Keep model strictly horizontal during rotation (only Y yaw ring enabled)
+    if (mode === 'rotate') {
+      this.transformControls.showX = false;
+      this.transformControls.showY = true;
+      this.transformControls.showZ = false;
+    } else {
+      this.transformControls.showX = true;
+      this.transformControls.showY = true;
+      this.transformControls.showZ = true;
+    }
     this.transformControls.attach(this.modelPivot);
     this.transformHelper.visible = true;
   }
@@ -901,11 +1086,8 @@ export class SceneManager {
       this.modelPivot.position.set(next.position[0], next.position[1], next.position[2]);
     }
     if (next.rotationDeg) {
-      this.modelPivot.rotation.set(
-        THREE.MathUtils.degToRad(next.rotationDeg[0]),
-        THREE.MathUtils.degToRad(next.rotationDeg[1]),
-        THREE.MathUtils.degToRad(next.rotationDeg[2]),
-      );
+      // Always preserve horizontal orientation (pitch = 0, roll = 0)
+      this.modelPivot.rotation.set(0, THREE.MathUtils.degToRad(next.rotationDeg[1]), 0);
     }
     if (next.scale !== undefined) {
       const clamped = Math.max(0.005, Math.min(50, next.scale));
@@ -1282,14 +1464,19 @@ export class SceneManager {
       this.callbacks.onLayersChanged(this.getLayersSnapshot());
     }
 
-    // 2. Apply scene's hidden node overrides if present
+    // 2. Apply scene's per-element hidden states (or restore defaults if none specified)
     if (target.hiddenNodeIds !== undefined) {
       const hiddenNodes = new Set(target.hiddenNodeIds);
       for (const key of this.nodeVisibility.keys()) {
-        this.nodeVisibility.set(key, !hiddenNodes.has(key));
+        this.nodeVisibility.set(key, key === 'node-root' || !hiddenNodes.has(key));
+      }
+    } else {
+      for (const key of this.nodeVisibility.keys()) {
+        this.nodeVisibility.set(key, this.defaultNodeVisibility.get(key) ?? true);
       }
     }
     this.applyVisibility();
+    this.callbacks.onNodeVisibilityChanged?.(this.getNodeVisibilityMap());
 
     // 3. Activate linked glTF/Collada animation clip if present
     if (target.animationClipName && this.currentModel.animationClips.length > 0) {
@@ -1621,7 +1808,8 @@ export class SceneManager {
       this.modelPivot.scale.setScalar(nextScale);
 
       const curAngle = Math.atan2(p1.z - p0.z, p1.x - p0.x);
-      this.modelPivot.rotation.y = this.twoHandStartRotY - (curAngle - this.twoHandStartAngle);
+      // Keep model strictly horizontal (zero pitch/roll)
+      this.modelPivot.rotation.set(0, this.twoHandStartRotY - (curAngle - this.twoHandStartAngle), 0);
 
       const curMid = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
       const deltaMid = curMid.sub(this.twoHandStartMid);
@@ -1639,15 +1827,45 @@ export class SceneManager {
         const quat = new THREE.Quaternion();
         const scl = new THREE.Vector3();
         nextMat.decompose(pos, quat, scl);
+        // Preserve horizontal orientation (yaw only, zero X/Z tilt!)
+        const euler = new THREE.Euler().setFromQuaternion(quat, 'YXZ');
         this.modelPivot.position.copy(pos);
-        this.modelPivot.quaternion.copy(quat);
+        this.modelPivot.rotation.set(0, euler.y, 0);
       }
     }
 
-    // E. Controller Thumbsticks & Buttons (Quest / VR / MR controllers)
+    // E. Update Left-Hand Wrist Menu Badge & Left-Hand Anchored Options Panel
+    if (!this.xrStatus.domOverlayActive) {
+      const smooth = 1 - Math.exp(-10 * dt);
+      const hasLeftHand = this.updateLeftHandAnchoredPanel(smooth);
+      this.leftWristBadge.visible = hasLeftHand;
+
+      // Direct finger poke on left wrist badge (Hand Tracking: right index fingertip!)
+      if (hasLeftHand) {
+        const nowMs = performance.now();
+        if (nowMs - this.lastWristPokeMs > 550) {
+          for (let i = 0; i < this.grabbers.length; i++) {
+            if (this.grabbers[i].inputSource?.handedness !== 'right') continue;
+            const joints = this.xrHands[i]?.joints as Record<string, THREE.Object3D | undefined> | undefined;
+            const indexTip = joints?.['index-finger-tip'];
+            if (indexTip && indexTip.visible) {
+              const tipPos = new THREE.Vector3();
+              indexTip.getWorldPosition(tipPos);
+              if (tipPos.distanceTo(this.leftWristBadge.position) < 0.042) {
+                this.lastWristPokeMs = nowMs;
+                this.toggleSpatialPanel();
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // F. Controller Thumbsticks & Buttons (Quest / VR / MR controllers)
     this.updateXRGamepads(session, dt);
 
-    // F. Spatial Panel ray hover feedback
+    // G. Spatial Panel ray hover feedback
     if (this.spatialPanel.group.visible) {
       let hovered = false;
       for (const g of this.grabbers) {
@@ -1694,7 +1912,7 @@ export class SceneManager {
         // X/Y buttons on left controller: toggle Spatial Panel / Passthrough
         this.edgeButton(`left-4`, Boolean(gp.buttons[4]?.pressed), () => this.toggleSpatialPanel());
         this.edgeButton(`left-5`, Boolean(gp.buttons[5]?.pressed), () =>
-          this.setBackgroundMode(this.backgroundMode === 'passthrough' ? 'studio' : 'passthrough'),
+          this.handleSpatialPanelAction({ type: 'toggle-passthrough' }),
         );
       } else if (source.handedness === 'right') {
         // Right stick X: rotate yaw; Right stick Y: uniform scale
@@ -1726,6 +1944,10 @@ export class SceneManager {
     this.renderer.domElement.removeEventListener('pointerdown', this.handlePointerDown);
     this.renderer.domElement.removeEventListener('pointerup', this.handlePointerUp);
     this.clearCurrentModel();
+    this.syncDocumentPassthroughClass(false);
+    this.leftWristBadgeTexture.dispose();
+    this.leftWristBadgeMesh.geometry.dispose();
+    (this.leftWristBadgeMesh.material as THREE.Material).dispose();
     this.spatialPanel.dispose();
     this.orbitControls.dispose();
     this.transformControls.dispose();

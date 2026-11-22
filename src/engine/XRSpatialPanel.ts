@@ -19,6 +19,8 @@ export type SpatialPanelAction =
   | { type: 'toggle-play-scenes' }
   | { type: 'step-scene'; delta: -1 | 1 }
   | { type: 'toggle-edges' }
+  | { type: 'toggle-pin' }
+  | { type: 'hide-panel' }
   | { type: 'exit-xr' };
 
 interface HitRegion {
@@ -34,7 +36,7 @@ type PanelTab = 'transform' | 'layers' | 'scenes';
 
 const CANVAS_W = 1024;
 const CANVAS_H = 680;
-const PANEL_W = 0.68;
+const PANEL_W = 0.54;
 const PANEL_H = (PANEL_W * CANVAS_H) / CANVAS_W;
 
 export class XRSpatialPanel {
@@ -67,6 +69,7 @@ export class XRSpatialPanel {
   };
   private currentScale = 1;
   private showEdges = true;
+  private isPinned = false;
 
   private onAction: (action: SpatialPanelAction) => void;
 
@@ -122,6 +125,7 @@ export class XRSpatialPanel {
     playback?: AnimationPlaybackState;
     scale?: number;
     showEdges?: boolean;
+    isPinned?: boolean;
   }): void {
     if (state.modelName !== undefined) this.modelName = state.modelName;
     if (state.backgroundMode !== undefined) this.backgroundMode = state.backgroundMode;
@@ -136,6 +140,7 @@ export class XRSpatialPanel {
     if (state.playback !== undefined) this.playback = state.playback;
     if (state.scale !== undefined) this.currentScale = state.scale;
     if (state.showEdges !== undefined) this.showEdges = state.showEdges;
+    if (state.isPinned !== undefined) this.isPinned = state.isPinned;
     this.render();
   }
 
@@ -321,21 +326,33 @@ export class XRSpatialPanel {
 
     ctx.fillStyle = '#cbd5e1';
     ctx.font = '500 19px system-ui, -apple-system, sans-serif';
-    ctx.fillText(this.clipText(this.modelName, 400), 32, 78);
+    ctx.fillText(this.clipText(this.modelName, 310), 32, 78);
 
     const isPassthrough = this.backgroundMode === 'passthrough';
     this.drawButton(
       'hdr-pt',
-      500,
+      356,
       24,
-      280,
+      230,
       58,
-      isPassthrough ? 'Passthrough: ON' : 'Fondo Virtual: ON',
+      isPassthrough ? 'Passthrough: ON' : 'Fondo: Virtual',
       { type: 'toggle-passthrough' },
       { active: isPassthrough },
     );
 
-    this.drawButton('hdr-exit', 800, 24, 192, 58, 'Salir XR', { type: 'exit-xr' }, { danger: true });
+    this.drawButton(
+      'hdr-pin',
+      598,
+      24,
+      142,
+      58,
+      this.isPinned ? 'Fijo' : 'Mano Izq.',
+      { type: 'toggle-pin' },
+      { active: !this.isPinned },
+    );
+
+    this.drawButton('hdr-hide', 752, 24, 114, 58, 'Ocultar', { type: 'hide-panel' });
+    this.drawButton('hdr-exit', 878, 24, 114, 58, 'Salir XR', { type: 'exit-xr' }, { danger: true });
 
     // Divider
     ctx.fillStyle = 'rgba(148, 163, 184, 0.2)';

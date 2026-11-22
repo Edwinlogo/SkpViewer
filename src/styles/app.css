@@ -40,6 +40,18 @@ body,
   user-select: none;
 }
 
+html.is-xr-passthrough,
+body.is-xr-passthrough,
+#root.is-xr-passthrough {
+  background: transparent !important;
+}
+
+.control-subnote {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
 .app-shell {
   position: relative;
   width: 100%;
